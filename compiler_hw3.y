@@ -28,6 +28,8 @@ int label_cnt = 0; //count label
 int exit_cnt = 0; //count exit
 int if_cnt = 0; //count how many if
 
+int err=0;
+
 %}
 
 %union {
@@ -82,10 +84,13 @@ declaration
     : VAR ID type '=' initializer NEWLINE
     {if(lookup_symbol($2.id)!=-1){
         yyerror("re-defined for variable");
+        err = 1;
         }else{create_symbol(varcnt, $2.id, $3.type, $5.f_val, 1);}}
     | VAR ID type NEWLINE
     {if(lookup_symbol($2.id)!=-1){
-        yyerror("re-defined for variable");}
+        yyerror("re-defined for variable");
+        err = 1;
+        }
         else{writeCode("\tldc 0");
             create_symbol(varcnt, $2.id, $3.type, 0.0, 0);}}
 ;
@@ -185,11 +190,24 @@ expr
     : equality_expr
     | ID '=' expr
     {
+        //cast
+        if(iord($1.id) != $3.type){
+            if($1.type == INT_t){
+                writeCode("\tf2i");
+            }else if($1.type == FLOAT_t){
+                writeCode("\ti2f");
+            }
+        }
         set_symbol($1.id, $3.f_val);
         int num = lookup_symbol($1.id);
         char str[512];
-        sprintf(str, "\tistore %d", num);
-        writeCode(str);
+        if(iord($1.id) == INT_t){
+            sprintf(str, "\tistore %d", num);
+            writeCode(str);
+        }else if(iord($1.id) == FLOAT_t){
+            sprintf(str, "\tfstore %d", num);
+            writeCode(str);
+        }
     }
     | prefix_expr assignment_op expr
     {
@@ -273,7 +291,7 @@ expr
             $$.f_val = (int)$1.f_val % (int)$3.f_val;
             if($1.type == INT_t && $3.type == INT_t){
                 set_symbol($1.id, ((int)$3.f_val%(int)$1.f_val));
-                writeCode("\timod");
+                writeCode("\tirem");
                 int num = lookup_symbol($1.id);
                 char str[512];
                 sprintf(str, "\tistore %d", num);
@@ -281,8 +299,10 @@ expr
             }
             else if($1.f_val == 0.0 || $3.f_val == 0.0){
                 yyerror("Can't MOD 0");
+                err = 1;
             }else{
                 yyerror("Can't MOD float");
+                err = 1;
             }
         }
     }
@@ -331,6 +351,7 @@ additive_expr
     {
         if($2 == ADD_t){
             $$.f_val = $1.f_val + $3.f_val;
+
             if($1.type == $3.type){
                 if($1.type == INT_t){
                     $$.type = INT_t;
@@ -342,6 +363,27 @@ additive_expr
             }
             else{
                 //cast
+                if(ID_flag == 0){
+                    if($3.type == INT_t){
+                        char str[512];
+                        sprintf(str, "\tistore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tf2i");
+                        sprintf(str, "\tiload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tiadd");
+                        $$.type = INT_t;
+                    }else if($3.type == FLOAT_t){
+                        char str[512];
+                        sprintf(str, "\tfstore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\ti2f");
+                        sprintf(str, "\tfload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tfadd");
+                        $$.type = FLOAT_t;
+                    }
+                }
             }
         }else if($2 == SUB_t){
             $$.f_val = $1.f_val - $3.f_val;
@@ -354,7 +396,27 @@ additive_expr
                     writeCode("\tfsub");
                 }
             }else{
-                //case
+                 if(ID_flag == 0){
+                    if($3.type == INT_t){
+                        char str[512];
+                        sprintf(str, "\tistore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tf2i");
+                        sprintf(str, "\tiload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tisub");
+                        $$.type = INT_t;
+                    }else if($3.type == FLOAT_t){
+                        char str[512];
+                        sprintf(str, "\tfstore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\ti2f");
+                        sprintf(str, "\tfload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tfsub");
+                        $$.type = FLOAT_t;
+                    }
+                }
             }
         }
     }
@@ -381,10 +443,32 @@ multiplicative_expr
                 }
             }else{
                 //cast
+                 if(ID_flag == 0){
+                    if($3.type == INT_t){
+                        char str[512];
+                        sprintf(str, "\tistore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tf2i");
+                        sprintf(str, "\tiload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\timul");
+                        $$.type = INT_t;
+                    }else if($3.type == FLOAT_t){
+                        char str[512];
+                        sprintf(str, "\tfstore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\ti2f");
+                        sprintf(str, "\tfload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tfmul");
+                        $$.type = FLOAT_t;
+                    }
+                }
             }
         }else if($2 == DIV_t){
             if($3.f_val == 0.0){
                 yyerror("Can't DIV 0");
+                err = 1;
             }
             $$.f_val = $1.f_val/$3.f_val;
             if($1.type == $3.type){
@@ -397,20 +481,44 @@ multiplicative_expr
                 }
             }else{
                 //cast
+                 if(ID_flag == 0){
+                    if($3.type == INT_t){
+                        char str[512];
+                        sprintf(str, "\tistore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tf2i");
+                        sprintf(str, "\tiload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tidiv");
+                        $$.type = INT_t;
+                    }else if($3.type == FLOAT_t){
+                        char str[512];
+                        sprintf(str, "\tfstore %d", varcnt);
+                        writeCode(str);
+                        writeCode("\ti2f");
+                        sprintf(str, "\tfload %d", varcnt);
+                        writeCode(str);
+                        writeCode("\tfdiv");
+                        $$.type = FLOAT_t;
+                    }
+                }
             }
         }else if($2 == MOD_t){
             if($1.type == FLOAT_t || $3.type == FLOAT_t){
                 yyerror("Cant't MOD float");
+                err = 1;
             }
             if($3.f_val == 0.0){
                 yyerror("Can't MOD 0");
+                err = 1;
             }
             $$.f_val = (int)$1.f_val%(int)$3.f_val;
             if($1.type == $3.type){
                 $$.type = INT_t;
-                writeCode("\timod");
+                writeCode("\tirem");
             }else{
                 //cast
+
             }
         }
     }
@@ -572,7 +680,8 @@ int main(int argc, char** argv)
     writeCode(".end method");
 
     //write .j file
-    writeFile();
+    if(err == 0)
+        writeFile();
 
     dump_symbol();
     return 0;
